@@ -928,10 +928,9 @@ const transformMessages = async (messages, model) => {
         item.role = "model";
         let modelParts = [];
         
-        // 【关键修复】显式处理 OpenAI 格式的 reasoning_content
-        // 如果 input JSON 中包含 reasoning_content，将其视为第一部分文本
+        // 【关键改进】支持将 OpenAI 格式的 reasoning_content 转换为 Vertex AI 的思维链 Part
         if (item.reasoning_content) {
-            modelParts.push({ text: item.reasoning_content });
+            modelParts.push({ text: item.reasoning_content, thought: true });
         }
 
         if (item.tool_calls) {
@@ -947,15 +946,18 @@ const transformMessages = async (messages, model) => {
                    rawContent = item.content.map(c => c.text || "").join("");
                }
                
-               // 移除 content 中的 markdown 图片链接，仅保留文本
+               // stripImages = true: 移除 markdown 图片链接
                const textParts = parseAssistantContent(rawContent, true); 
                
-               modelParts.push(...textParts);
+               // 【关键修复】过滤掉剥离图片后产生的空文本 Part，避免 400 Invalid Argument
+               const validTextParts = textParts.filter(p => p.text && p.text.trim().length > 0);
+
+               modelParts.push(...validTextParts);
                // 最后附加签名
                modelParts.push({ thoughtSignature: signature });
 
             } else {
-               // 【V2.5 逻辑】
+               // 【V2.5 逻辑】或普通对话
                const contentParts = await transformMsg(item);
                modelParts.push(...contentParts);
             }
