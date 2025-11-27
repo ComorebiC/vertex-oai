@@ -939,6 +939,7 @@ const transformMessages = async (messages, model) => {
         if (item.tool_calls) {
             const toolParts = transformFnCalls(item);
             modelParts.push(...toolParts);
+            modelParts.calls = toolParts.calls;
         } else {
             const signature = item.thought_signature || item.extra_content?.google?.thought_signature;
             
