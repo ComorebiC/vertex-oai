@@ -83,22 +83,18 @@ const handleOPTIONS = async () => {
 };
 
 const API_CLIENT = "genai-js/0.21.0";
-// 移除 apiKey 参数，因为我们通过 URL query param 传递它
 const makeHeaders = (more) => ({
   "x-goog-api-client": API_CLIENT,
   ...more
 });
 
 async function handleModels(apiKey) {
-  // 注意：Vertex AI Express Mode 不一定支持此模型列表 API。
   const url = `${TARGET_BASE_URL}${TARGET_PREFIX}`;
   const response = await fetch(url, {
-    // Vertex AI model listing might require the key in the URL if not using auth headers
     headers: makeHeaders(),
   });
   let { body } = response;
   if (response.ok) {
-    // 假设 Vertex AI 的响应结构与 Gemini API 类似
     const { models } = JSON.parse(await response.text());
     body = JSON.stringify({
       object: "list",
@@ -135,7 +131,6 @@ async function handleEmbeddings(req, apiKey) {
     req.input = [req.input];
   }
 
-  // 构造 Vertex AI URL
   const url = `${TARGET_BASE_URL}${TARGET_PREFIX}/${model}:batchEmbedContents`;
   const newURL = new URL(url);
   newURL.searchParams.set("key", apiKey);
@@ -146,7 +141,7 @@ async function handleEmbeddings(req, apiKey) {
     body: JSON.stringify({
       "requests": req.input.map(text => ({
         model: modelFull,
-        content: { parts: [{ text }] }, // Fix: text part needs to be in an array
+        content: { parts: [{ text }] },
         outputDimensionality: req.dimensions,
       }))
     })
@@ -192,7 +187,6 @@ function addWavHeader(pcmData) {
   return Buffer.concat([header, pcmData]);
 }
 
-// TTS API 路径也需要更新，但逻辑保持不变
 async function handleTts(req, apiKey) {
   if (!req.messages || req.messages.length === 0) {
     throw new HttpError("`messages` array is required for TTS.", 400);
@@ -226,7 +220,6 @@ async function handleTts(req, apiKey) {
     },
   };
 
-  // 构造 Vertex AI URL
   const url = `${TARGET_BASE_URL}${TARGET_PREFIX}/${geminiTtsModel}:generateContent`;
   const newURL = new URL(url);
   newURL.searchParams.set("key", apiKey);
@@ -236,8 +229,6 @@ async function handleTts(req, apiKey) {
     headers: makeHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(geminiPayload),
   });
-
-  // ... (rest of TTS response processing remains the same) ...
 
   if (!response.ok) {
     const errorBody = await response.text();
@@ -306,7 +297,6 @@ async function handleSpeech(req, apiKey) {
     },
   };
 
-  // 构造 Vertex AI URL
   const url = `${TARGET_BASE_URL}${TARGET_PREFIX}/${geminiTtsModel}:generateContent`;
   const newURL = new URL(url);
   newURL.searchParams.set("key", apiKey);
@@ -317,7 +307,6 @@ async function handleSpeech(req, apiKey) {
     body: JSON.stringify(geminiPayload),
   });
 
-  // ... (rest of Speech response processing remains the same) ...
   if (!geminiApiResponse.ok) {
     const errorBody = await geminiApiResponse.text();
     console.error("Gemini TTS API Error:", errorBody);
@@ -380,17 +369,15 @@ async function handleCompletions(req, apiKey) {
   }
   model = model || DEFAULT_MODEL;
 
-  // --- 核心重定向逻辑 ---
   let targetModel = model;
   if (model.includes("gemini-2.5-pro-actually-3")) {
     console.log(`[Proxy] Redirecting model: ${model} -> gemini-3-pro-preview`);
     targetModel = "gemini-3-pro-preview";
   }
-  // --- 结束核心重定向逻辑 ---
 
   const isImageGenerationRequest = targetModel.includes("-image");
 
-  let body = await transformRequest(req, targetModel); // 使用 targetModel 来确保配置正确
+  let body = await transformRequest(req, targetModel);
 
   if (isImageGenerationRequest) {
     body.generationConfig = body.generationConfig || {};
@@ -407,12 +394,10 @@ async function handleCompletions(req, apiKey) {
       body.cachedContent = extra.cached_content;
     }
     if (extra.thinking_config) {
-      // 这里的 thinking_config 已经包含在 transformConfig 中，但如果客户端直接传入 extra_body，则覆盖
       body.generationConfig.thinkingConfig = extra.thinking_config;
     }
   }
 
-  // 确保在应用工具前，模型名称已经稳定
   switch (true) {
     case targetModel.endsWith(":search"):
       targetModel = targetModel.slice(0, -7);
@@ -433,20 +418,17 @@ async function handleCompletions(req, apiKey) {
 
   const TASK = req.stream ? "streamGenerateContent" : "generateContent";
 
-  // --- 构建新的 Vertex AI URL，并将 API Key 作为 Query Param ---
   let url = `${TARGET_BASE_URL}${TARGET_PREFIX}/${targetModel}:${TASK}`;
   const newURL = new URL(url);
   newURL.searchParams.set("key", apiKey);
   if (req.stream) {
-    // 保留 alt=sse 以便客户端正确解析 SSE 流
     newURL.searchParams.set("alt", "sse");
   }
   url = newURL.toString();
-  // --- URL 构建结束 ---
 
   const response = await fetch(url, {
     method: "POST",
-    headers: makeHeaders({ "Content-Type": "application/json" }), // 使用不带 key 的 headers
+    headers: makeHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
 
@@ -467,7 +449,7 @@ async function handleCompletions(req, apiKey) {
           transform: toOpenAiStream,
           flush: toOpenAiStreamFlush,
           streamIncludeUsage: req.stream_options?.include_usage,
-          model: targetModel, // 使用最终模型 ID
+          model: targetModel,
           id, last: [],
           shared,
         }))
@@ -483,7 +465,7 @@ async function handleCompletions(req, apiKey) {
         console.error("Error parsing response:", err);
         return new Response(body, fixCors(response));
       }
-      body = processCompletionsResponse(body, targetModel, id); // 使用最终模型 ID
+      body = processCompletionsResponse(body, targetModel, id);
     }
   }
   return new Response(body, fixCors(response));
@@ -492,7 +474,6 @@ async function handleCompletions(req, apiKey) {
 
 const resolveRef = (ref, rootSchema) => {
   if (!ref.startsWith('#/')) {
-    // We only support local refs for now
     return null;
   }
   const path = ref.substring(2).split('/');
@@ -600,23 +581,10 @@ const safetySettings = harmCategory.map(category => ({
   category,
   threshold: "BLOCK_NONE",
 }));
-const fieldsMap = {
-  frequency_penalty: "frequencyPenalty",
-  max_completion_tokens: "maxOutputTokens",
-  max_tokens: "maxOutputTokens",
-  n: "candidateCount",
-  presence_penalty: "presencePenalty",
-  seed: "seed",
-  stop: "stopSequences",
-  temperature: "temperature",
-  top_k: "topK",
-  top_p: "topP",
-};
 
 const transformConfig = (req, model) => {
   let cfg = {};
 
-  // 1. 基础参数映射
   const fieldsMap = {
     frequency_penalty: "frequencyPenalty",
     max_completion_tokens: "maxOutputTokens",
@@ -637,13 +605,10 @@ const transformConfig = (req, model) => {
     }
   }
 
-  // 2. Response Format (JSON Mode / JSON Schema)
   if (req.response_format) {
     switch (req.response_format.type) {
       case "json_schema":
-        // 如果是 JSON Schema，必须进行转换并清理不支持的关键字
         if (req.response_format.json_schema?.schema) {
-            // 假设 adjustSchema 和 transformOpenApiSchemaToGemini 在外部定义
             adjustSchema(req.response_format);
             cfg.responseSchema = req.response_format.json_schema.schema;
             cfg.responseMimeType = "application/json";
@@ -658,22 +623,20 @@ const transformConfig = (req, model) => {
     }
   }
 
-  // 3. Thinking / Reasoning Effort 适配
   if (req.reasoning_effort) {
-    // 判断是否为 Gemini 3 系列 (使用 thinkingLevel)
     const isV3 = model?.includes("gemini-3");
 
     if (isV3) {
       let thinkingLevel;
       switch (req.reasoning_effort) {
         case "low":
-          thinkingLevel = "LOW"; // 使用大写
+          thinkingLevel = "LOW";
           break;
         case "medium":
-          thinkingLevel = "MEDIUM"; // 使用大写
+          thinkingLevel = "MEDIUM";
           break;
         case "high":
-          thinkingLevel = "HIGH"; // 使用大写
+          thinkingLevel = "HIGH";
           break;
         default:
           thinkingLevel = "HIGH";
@@ -681,24 +644,18 @@ const transformConfig = (req, model) => {
       cfg.thinkingConfig = { thinkingLevel, includeThoughts: true };
     }
     else {
-      // Gemini 2.5 系列 (使用 thinkingBudget)
       let thinkingBudget;
-      const isPro = model?.includes("pro"); // 2.5-pro
-      const isLite = model?.includes("lite"); // 2.5-flash-lite
+      const isPro = model?.includes("pro");
+      const isLite = model?.includes("lite");
 
-      // 根据文档设定 Budget
       switch (req.reasoning_effort) {
         case "low":
-          // Low: 给予较低的固定 token 预算
           thinkingBudget = isLite ? 1024 : 2048;
           break;
         case "medium":
-          // Medium: 启用动态思考 (Dynamic Thinking)
           thinkingBudget = -1;
           break;
         case "high":
-          // High: 给予最大或接近最大的预算
-          // 2.5 Pro Max: 32768, Flash Max: 24576
           thinkingBudget = isPro ? 32768 : 24576;
           break;
         default:
@@ -761,15 +718,11 @@ const transformFnResponse = ({ content, tool_call_id }, parts) => {
 
   let response;
   try {
-    // First, attempt to parse the string as JSON
     response = JSON.parse(stringContent);
   } catch (err) {
-    // If parsing fails, treat it as a plain string and wrap it in an object.
-    // This makes it compatible with Gemini's structured response requirement.
     response = { result: stringContent };
   }
 
-  // This check is still useful for cases where the parsed JSON is not an object (e.g., a number, a boolean, or an array).
   if (typeof response !== "object" || response === null || Array.isArray(response)) {
     response = { result: response };
   }
@@ -792,7 +745,16 @@ const transformFnResponse = ({ content, tool_call_id }, parts) => {
   };
 };
 
-const transformFnCalls = ({ tool_calls }) => {
+// 修复: 接收完整 message 对象，以便正确提取 thought_signature 并注入到 Gemini 3 Pro 要求的第一个 functionCall 中
+const transformFnCalls = (message) => {
+  const { tool_calls } = message;
+  
+  // 按照文档：OpenAI Compatibility 模式下，thought_signature 可能会被客户端回传在 extra_content.google.thought_signature
+  // 或者为了兼容旧习惯，也检查 message 根级别的 thought_signature
+  const signature = message.thought_signature || 
+                    message.extra_content?.google?.thought_signature ||
+                    tool_calls?.[0]?.extra_content?.google?.thought_signature;
+
   const calls = {};
   const parts = tool_calls.map(({ function: { arguments: argstr, name }, id, type }, i) => {
     if (type !== "function") {
@@ -806,12 +768,19 @@ const transformFnCalls = ({ tool_calls }) => {
       throw new HttpError("Invalid function arguments: " + argstr, 400);
     }
     calls[id] = { i, name };
-    return {
+    
+    const part = {
       functionCall: {
         name,
         args,
       }
     };
+
+    // 关键修复：Gemini 3 Pro 要求如果是函数调用，必须将 thoughtSignature 附着在第一个 functionCall 上
+    if (i === 0 && signature) {
+        part.thoughtSignature = signature;
+    }
+    return part;
   });
   parts.calls = calls;
   return parts;
@@ -928,47 +897,39 @@ const transformMessages = async (messages) => {
   const contents = [];
   let system_instruction;
 
-  // 新增：用于存储上一个 assistant 消息中的 thought_signature
-  let last_model_signature = null;
-
   for (const item of messages) {
     switch (item.role) {
       case "system":
         system_instruction = { parts: await transformMsg(item) };
         continue;
       case "tool":
+        // 角色为 tool 时，根据文档，不应该在这里注入 signature。
+        // signature 属于上一条 model 消息（assistant 角色）。
         let { role: r, parts: p } = contents[contents.length - 1] ?? {};
         if (r !== "function") {
           const calls = p?.calls;
           p = []; p.calls = calls;
           contents.push({ role: "function", parts: p });
         }
-
         transformFnResponse(item, p);
-
-        // --- 核心修改：将暂存的 thought_signature 注入到 functionResponse 所在的 content block ---
-        if (last_model_signature) {
-             p.push({ thoughtSignature: last_model_signature });
-             console.log(`[ThoughtSignature] Injecting signature into function response turn.`);
-             last_model_signature = null; // 用完后清空
-        }
-        // --- 结束核心修改 ---
-
         continue;
       case "assistant":
         item.role = "model";
-        const modelParts = item.tool_calls ? transformFnCalls(item) : await transformMsg(item);
-
-        // 如果有签名，捕获签名但**不立即注入**到 parts 中，而是作为独立 part 注入。
-        // 同时保存到 last_model_signature，以供下一个 role: tool 消息使用。
-        if (item.thought_signature) {
-             modelParts.push({ thoughtSignature: item.thought_signature });
-             console.log(`[ThoughtSignature] Injecting signature for model turn.`);
-
-             // 如果这是一个函数调用（即 modelParts 包含 functionCall），我们仍需为下一个 tool 消息保留它
-             if (item.tool_calls) {
-                last_model_signature = item.thought_signature;
-             }
+        let modelParts;
+        if (item.tool_calls) {
+            // 如果有工具调用，调用修复后的 transformFnCalls，它会处理 thoughtSignature 的注入
+            modelParts = transformFnCalls(item);
+        } else {
+            // 纯文本回复
+            modelParts = await transformMsg(item);
+            // 如果存在 thought_signature 且没有 tool_calls，根据文档，推荐附在最后一部分
+            const signature = item.thought_signature || item.extra_content?.google?.thought_signature;
+            if (signature && modelParts.length > 0) {
+                // Vertex AI 允许在文本 part 中包含 thoughtSignature，或者单独一个 part
+                // 简单起见，如果最后一部分是 text，附着上去（如果 API 支持），或者作为新 part
+                // 目前为了安全，我们假设它作为单独属性存在于 part 对象中
+                modelParts[modelParts.length - 1].thoughtSignature = signature;
+            }
         }
 
         contents.push({
@@ -981,8 +942,6 @@ const transformMessages = async (messages) => {
           role: item.role,
           parts: item.tool_calls ? transformFnCalls(item) : await transformMsg(item)
         });
-        // 遇到新的 user 消息，重置签名
-        last_model_signature = null;
         break;
       default:
         throw new HttpError(`Unknown message role: "${item.role}"`, 400);
@@ -998,18 +957,15 @@ const transformMessages = async (messages) => {
 
 const reverseTransformValue = (value) => {
   if (typeof value !== 'string') {
-    return value; // 如果不是字符串，直接返回
+    return value;
   }
-  // 检查布尔值
   if (value === 'true') return true;
   if (value === 'false') return false;
-  // 检查 null
   if (value === 'null') return null;
-  // 检查数字 (整数或浮点数)
   if (value.trim() !== '' && !isNaN(Number(value)) && Number(value).toString() === value) {
     return Number(value);
   }
-  return value; // 默认返回原始字符串
+  return value;
 };
 
 const reverseTransformArgs = (args) => {
@@ -1018,7 +974,7 @@ const reverseTransformArgs = (args) => {
   }
 
   if (Array.isArray(args)) {
-    return args.map(item => reverseTransformArgs(item)); // 递归处理数组
+    return args.map(item => reverseTransformArgs(item));
   }
 
   const newArgs = {};
@@ -1026,7 +982,7 @@ const reverseTransformArgs = (args) => {
     if (Object.prototype.hasOwnProperty.call(args, key)) {
       const value = args[key];
       if (typeof value === 'object') {
-        newArgs[key] = reverseTransformArgs(value); // 递归处理嵌套对象
+        newArgs[key] = reverseTransformArgs(value);
       } else {
         newArgs[key] = reverseTransformValue(value);
       }
@@ -1036,22 +992,20 @@ const reverseTransformArgs = (args) => {
 };
 
 const transformTools = (req) => {
-  let tools, toolConfig; // 使用 camelCase 变量名以保持一致
+  let tools, toolConfig;
 
   if (req.tools) {
     const funcs = req.tools.filter(tool => tool.type === "function");
 
-    // 对每个函数声明应用 schema 转换
     funcs.forEach(adjustSchema);
 
-    // 使用正确的 Gemini 结构和 camelCase 键名: `functionDeclarations`
     tools = [{
       functionDeclarations: funcs.map(schema => schema.function)
     }];
   }
 
   if (req.tool_choice) {
-    let mode = "AUTO"; // 默认模式
+    let mode = "AUTO";
     let allowedFunctionNames;
 
     if (typeof req.tool_choice === "string") {
@@ -1060,7 +1014,6 @@ const transformTools = (req) => {
           mode = "AUTO";
           break;
         case "required":
-          // OpenAI的 "required" 意味着模型必须调用一个工具，这最接近Gemini的 "ANY"
           mode = "ANY";
           break;
         case "none":
@@ -1068,22 +1021,18 @@ const transformTools = (req) => {
           break;
       }
     } else if (typeof req.tool_choice === "object" && req.tool_choice.type === "function") {
-      // 强制调用特定函数
       mode = "ANY";
       allowedFunctionNames = [req.tool_choice.function.name];
     }
 
-    // 使用正确的 camelCase 键名: `functionCallingConfig`, `allowedFunctionNames`
     toolConfig = {
       functionCallingConfig: {
         mode,
-        // 仅当存在时才添加 allowedFunctionNames
         ...(allowedFunctionNames && { allowedFunctionNames })
       }
     };
   }
 
-  // 返回转换后的对象，注意变量名也是 camelCase
   return { tools, tool_config: toolConfig };
 };
 
@@ -1126,6 +1075,10 @@ const transformCandidates = (key, cand) => {
           arguments: JSON.stringify(reverseTransformArgs(fc.args)),
         }
       });
+      // 检查 functionCall 部件上是否直接附带了 thoughtSignature (Gemini 3 Pro)
+      if (part.thoughtSignature) {
+          thoughtSignature = part.thoughtSignature;
+      }
     } else if (part.thought === true && part.text) {
       reasoningParts.push(part.text);
     } else if (part.text) {
@@ -1135,6 +1088,7 @@ const transformCandidates = (key, cand) => {
       const markdownImage = `![gemini-image-generation](data:${mimeType};base64,${data})`;
       contentParts.push(markdownImage);
     } else if (part.thoughtSignature) {
+      // 文本部分的 thoughtSignature
       thoughtSignature = part.thoughtSignature;
     }
   }
@@ -1168,8 +1122,24 @@ const transformCandidates = (key, cand) => {
   if (cand.url_context_metadata) {
     message.url_context_metadata = cand.url_context_metadata;
   }
+
+  // 关键修复：根据文档的 "OpenAI Compatibility" 示例，将 thoughtSignature 放入正确位置
   if (thoughtSignature) {
-    message.thought_signature = thoughtSignature;
+    if (message.tool_calls && message.tool_calls.length > 0) {
+        // 如果有工具调用，签名必须附在第一个工具调用中
+        const firstToolCall = message.tool_calls[0];
+        if (!firstToolCall.extra_content) firstToolCall.extra_content = {};
+        if (!firstToolCall.extra_content.google) firstToolCall.extra_content.google = {};
+        firstToolCall.extra_content.google.thought_signature = thoughtSignature;
+    } else {
+        // 如果是纯文本回复，通常放在 extra_content 或者根节点（取决于客户端如何处理）
+        // 文档未明确指定非工具调用的 OpenAI 映射，但保持一致性建议放在 extra_content
+        if (!message.extra_content) message.extra_content = {};
+        if (!message.extra_content.google) message.extra_content.google = {};
+        message.extra_content.google.thought_signature = thoughtSignature;
+        // 为了兼容性，也可以在根节点保留一份
+        message.thought_signature = thoughtSignature;
+    }
   }
 
   return {
@@ -1305,7 +1275,6 @@ function toOpenAiStream(line, controller) {
   const hasContent = "content" in cand.delta;
   const hasReasoning = "reasoning_content" in cand.delta;
   const hasToolCalls = "tool_calls" in cand.delta;
-  // 因为元数据也被添加到了 delta 对象中，所以也要检查它们
   const hasGrounding = "grounding_metadata" in cand.delta;
   const hasUrlContext = "url_context_metadata" in cand.delta;
 
