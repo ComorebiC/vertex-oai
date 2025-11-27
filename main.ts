@@ -4,7 +4,7 @@ import { Buffer } from "node:buffer";
 const TARGET_BASE_URL = "https://aiplatform.googleapis.com";
 const TARGET_PREFIX = "/v1/publishers/google/models";
 
-// 定义图片生成模型列表
+// 定义图片生成模型列表，用于特殊处理配置
 const IMAGE_MODELS = [
   "gemini-3-pro-image-preview",
   "gemini-2.5-flash-image",
@@ -791,6 +791,7 @@ const transformFnCalls = (message) => {
 };
 
 // 辅助函数：从文本中提取 Base64 图片 Markdown 并转换为 parts
+// stripImages = true: 移除 Markdown 图片链接，并且不生成 inlineData
 function parseAssistantContent(content, stripImages = false) {
   const parts = [];
   const imageMarkdownRegex = /!\[gemini-image-generation\]\(data:(image\/\w+);base64,([\w+/=-]+)\)/g;
@@ -803,10 +804,12 @@ function parseAssistantContent(content, stripImages = false) {
   let match;
 
   while ((match = imageMarkdownRegex.exec(content)) !== null) {
+    // 提取图片之前的文本
     if (match.index > lastIndex) {
       parts.push({ text: content.substring(lastIndex, match.index) });
     }
 
+    // 如果不需要剥离图片，则转换数据
     if (!stripImages) {
         const mimeType = match[1];
         const data = match[2];
@@ -821,11 +824,14 @@ function parseAssistantContent(content, stripImages = false) {
     lastIndex = match.index + match[0].length;
   }
 
+  // 提取剩余文本
   if (lastIndex < content.length) {
     parts.push({ text: content.substring(lastIndex) });
   }
 
-  if (parts.length === 0 && content) {
+  // 修正逻辑：只有在非剥离模式下，如果没匹配到任何东西才把原始内容当做文本。
+  // 在剥离模式下，如果全部被剥离，parts 为空是预期的。
+  if (parts.length === 0 && content && !stripImages) {
     parts.push({ text: content });
   }
 
@@ -904,6 +910,7 @@ const transformMessages = async (messages, model) => {
   const contents = [];
   let system_instruction;
 
+  // 判断是否为 V3+ 图片模型 (Gemini 3 Pro Image)
   const isV3ImageModel = model && model.includes("gemini-3") && model.includes("image");
 
   for (const item of messages) {
@@ -924,6 +931,7 @@ const transformMessages = async (messages, model) => {
         item.role = "model";
         let modelParts = [];
         
+        // 1. 处理 reasoning_content (作为 thought)
         if (item.reasoning_content) {
             modelParts.push({ text: item.reasoning_content, thought: true });
         }
@@ -935,18 +943,24 @@ const transformMessages = async (messages, model) => {
             const signature = item.thought_signature || item.extra_content?.google?.thought_signature;
             
             if (isV3ImageModel && signature) {
+               // 【V3 逻辑】：
                let rawContent = typeof item.content === 'string' ? item.content : "";
                if (Array.isArray(item.content)) {
                    rawContent = item.content.map(c => c.text || "").join("");
                }
                
+               // 剥离图片，不生成 inlineData
                const textParts = parseAssistantContent(rawContent, true); 
+               
+               // 【关键修复】严格过滤空文本 Part
+               // 只有当 text 存在且不为空字符串时才保留
                const validTextParts = textParts.filter(p => p.text !== undefined && p.text !== "");
 
                modelParts.push(...validTextParts);
                modelParts.push({ thoughtSignature: signature });
 
             } else {
+               // 【V2.5 逻辑】：正常保留 Base64 图片
                const contentParts = await transformMsg(item);
                modelParts.push(...contentParts);
             }
@@ -1224,26 +1238,20 @@ const processCompletionsResponse = (data, model, id) => {
   return JSON.stringify(obj, null, 2);
 };
 
-// 【核心修复】使用 indexOf 替代正则表达式，解决 Base64 大图片数据解析失败的问题
+const responseLineRE = /^data: (.*)(?:\n\n|\r\r|\r\n\r\n)/;
 function parseStream(chunk, controller) {
   this.buffer += chunk;
-  while (true) {
-    const idx = this.buffer.indexOf('\n\n');
-    if (idx === -1) break;
-    const line = this.buffer.slice(0, idx);
-    // 移除 'data: ' 前缀
-    const data = line.replace(/^data: /, '');
-    controller.enqueue(data);
-    this.buffer = this.buffer.slice(idx + 2);
-  }
+  do {
+    const match = this.buffer.match(responseLineRE);
+    if (!match) { break; }
+    controller.enqueue(match[1]);
+    this.buffer = this.buffer.substring(match[0].length);
+  } while (true);
 }
 function parseStreamFlush(controller) {
   if (this.buffer) {
-    // 剩余数据通常不完整或无效，但在某些情况下可能包含最后一块
-    console.error("Invalid data left in buffer:", this.buffer.substring(0, 50) + "...");
-    // 尝试清理并发送，防止丢失最后的数据
-    const data = this.buffer.replace(/^data: /, '');
-    controller.enqueue(data);
+    console.error("Invalid data:", this.buffer);
+    controller.enqueue(this.buffer);
     this.shared.is_buffers_rest = true;
   }
 }
