@@ -383,14 +383,11 @@ async function handleCompletions(req, apiKey) {
 
   let body = await transformRequest(req, targetModel);
 
-  // 特殊处理图片生成模型的配置
   if (IMAGE_MODELS.includes(targetModel)) {
     body.generationConfig = body.generationConfig || {};
-    // 图片模型必须包含 IMAGE 模态
     if (!body.generationConfig.responseModalities) {
         body.generationConfig.responseModalities = ["TEXT", "IMAGE"];
     }
-    // 图片模型通常没有 system instruction
     delete body.system_instruction;
   }
 
@@ -794,6 +791,7 @@ const transformFnCalls = (message) => {
 };
 
 // 辅助函数：从文本中提取 Base64 图片 Markdown 并转换为 parts
+// stripImages = true: 移除 Markdown 图片链接，并且不生成 inlineData
 function parseAssistantContent(content, stripImages = false) {
   const parts = [];
   const imageMarkdownRegex = /!\[gemini-image-generation\]\(data:(image\/\w+);base64,([\w+/=-]+)\)/g;
@@ -806,10 +804,12 @@ function parseAssistantContent(content, stripImages = false) {
   let match;
 
   while ((match = imageMarkdownRegex.exec(content)) !== null) {
+    // 提取图片之前的文本
     if (match.index > lastIndex) {
       parts.push({ text: content.substring(lastIndex, match.index) });
     }
 
+    // 如果不需要剥离图片，则转换数据
     if (!stripImages) {
         const mimeType = match[1];
         const data = match[2];
@@ -824,11 +824,14 @@ function parseAssistantContent(content, stripImages = false) {
     lastIndex = match.index + match[0].length;
   }
 
+  // 提取剩余文本
   if (lastIndex < content.length) {
     parts.push({ text: content.substring(lastIndex) });
   }
 
-  if (parts.length === 0 && content) {
+  // 修正逻辑：只有在非剥离模式下，如果没匹配到任何东西才把原始内容当做文本。
+  // 在剥离模式下，如果全部被剥离，parts 为空是预期的。
+  if (parts.length === 0 && content && !stripImages) {
     parts.push({ text: content });
   }
 
@@ -928,7 +931,7 @@ const transformMessages = async (messages, model) => {
         item.role = "model";
         let modelParts = [];
         
-        // 【关键改进】支持将 OpenAI 格式的 reasoning_content 转换为 Vertex AI 的思维链 Part
+        // 1. 处理 reasoning_content (作为 thought)
         if (item.reasoning_content) {
             modelParts.push({ text: item.reasoning_content, thought: true });
         }
@@ -940,24 +943,24 @@ const transformMessages = async (messages, model) => {
             const signature = item.thought_signature || item.extra_content?.google?.thought_signature;
             
             if (isV3ImageModel && signature) {
-               // 【V3 逻辑】
+               // 【V3 逻辑】：
                let rawContent = typeof item.content === 'string' ? item.content : "";
                if (Array.isArray(item.content)) {
                    rawContent = item.content.map(c => c.text || "").join("");
                }
                
-               // stripImages = true: 移除 markdown 图片链接
+               // 剥离图片，不生成 inlineData
                const textParts = parseAssistantContent(rawContent, true); 
                
-               // 【关键修复】过滤掉剥离图片后产生的空文本 Part，避免 400 Invalid Argument
-               const validTextParts = textParts.filter(p => p.text && p.text.trim().length > 0);
+               // 【关键修复】严格过滤空文本 Part
+               // 只有当 text 存在且不为空字符串时才保留
+               const validTextParts = textParts.filter(p => p.text !== undefined && p.text !== "");
 
                modelParts.push(...validTextParts);
-               // 最后附加签名
                modelParts.push({ thoughtSignature: signature });
 
             } else {
-               // 【V2.5 逻辑】或普通对话
+               // 【V2.5 逻辑】：正常保留 Base64 图片
                const contentParts = await transformMsg(item);
                modelParts.push(...contentParts);
             }
