@@ -429,6 +429,12 @@ async function handleCompletions(req, apiKey) {
       break;
   }
 
+  // // === 【添加调试代码 START】 ===
+  // console.log("-------------- [DEBUG] Request to Gemini --------------");
+  // console.log(JSON.stringify(body, null, 2)); // 打印转换后的 Gemini 格式 JSON
+  // console.log("-------------------------------------------------------");
+  // // === 【添加调试代码 END】 ===
+
   const TASK = req.stream ? "streamGenerateContent" : "generateContent";
 
   let url = `${TARGET_BASE_URL}${TARGET_PREFIX}/${targetModel}:${TASK}`;
@@ -469,6 +475,13 @@ async function handleCompletions(req, apiKey) {
         .pipeThrough(new TextEncoderStream());
     } else {
       body = await response.text();
+
+      // // === 【添加调试代码 START】 ===
+      // console.log("-------------- [DEBUG] Response from Gemini (Raw) --------------");
+      // console.log(body); // 打印 Gemini 返回的原始数据
+      // console.log("----------------------------------------------------------------");
+      // // === 【添加调试代码 END】 ===
+
       try {
         body = JSON.parse(body);
         if (!body.candidates) {
@@ -798,7 +811,8 @@ const transformFnCalls = (message) => {
 // stripImages = true: 移除 Markdown 图片链接，并且不生成 inlineData
 function parseAssistantContent(content, stripImages = false) {
   const parts = [];
-  const imageMarkdownRegex = /!\[gemini-image-generation\]\(data:(image\/\w+);base64,([\w+/=-]+)\)/g;
+  // 【修改点】：将 ([\w+/=-]+) 改为 ([^)]+)，匹配除右括号外的所有字符，兼容换行符和特殊格式
+  const imageMarkdownRegex = /!\[gemini-image-generation\]\(data:(image\/\w+);base64,([^)]+)\)/g;
 
   if (typeof content !== 'string') {
     return parts;
@@ -810,17 +824,22 @@ function parseAssistantContent(content, stripImages = false) {
   while ((match = imageMarkdownRegex.exec(content)) !== null) {
     // 提取图片之前的文本
     if (match.index > lastIndex) {
-      parts.push({ text: content.substring(lastIndex, match.index) });
+      const textBefore = content.substring(lastIndex, match.index);
+      // 只有非空文本才推入，避免产生大量空 text part
+      if (textBefore) { 
+        parts.push({ text: textBefore });
+      }
     }
 
     // 如果不需要剥离图片，则转换数据
     if (!stripImages) {
         const mimeType = match[1];
-        const data = match[2];
+        const data = match[2]; // 这里获取到的 data 可能包含换行符
         parts.push({
           inlineData: {
             mimeType,
-            data,
+            // 建议移除可能存在的换行符，虽然 Gemini 通常能容忍，但清理一下更安全
+            data: data.replace(/\s/g, ''), 
           },
         });
     }
@@ -830,11 +849,13 @@ function parseAssistantContent(content, stripImages = false) {
 
   // 提取剩余文本
   if (lastIndex < content.length) {
-    parts.push({ text: content.substring(lastIndex) });
+    const textAfter = content.substring(lastIndex);
+    if (textAfter) {
+      parts.push({ text: textAfter });
+    }
   }
 
-  // 修正逻辑：只有在非剥离模式下，如果没匹配到任何东西才把原始内容当做文本。
-  // 在剥离模式下，如果全部被剥离，parts 为空是预期的。
+  // 兜底逻辑：如果什么都没匹配到（且不是剥离模式），或者完全没内容，保留原始文本
   if (parts.length === 0 && content && !stripImages) {
     parts.push({ text: content });
   }
