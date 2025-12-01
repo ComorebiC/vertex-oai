@@ -381,7 +381,7 @@ async function handleCompletions(req, apiKey) {
 
   let targetModel = model;
   if (model.includes("gemini-2.5-pro-actually-3")) {
-    console.log(`[Proxy] Redirecting model: ${model} -> gemini-3-pro-preview`);
+    // console.log(`[Proxy] Redirecting model: ${model} -> gemini-3-pro-preview`);
     targetModel = "gemini-3-pro-preview";
   }
 
@@ -390,7 +390,7 @@ async function handleCompletions(req, apiKey) {
   if (IMAGE_MODELS.includes(targetModel)) {
     body.generationConfig = body.generationConfig || {};
     if (!body.generationConfig.responseModalities) {
-        body.generationConfig.responseModalities = ["TEXT", "IMAGE"];
+      body.generationConfig.responseModalities = ["TEXT", "IMAGE"];
     }
     delete body.system_instruction;
   }
@@ -635,9 +635,9 @@ const transformConfig = (req, model) => {
     switch (req.response_format.type) {
       case "json_schema":
         if (req.response_format.json_schema?.schema) {
-            adjustSchema(req.response_format);
-            cfg.responseSchema = req.response_format.json_schema.schema;
-            cfg.responseMimeType = "application/json";
+          adjustSchema(req.response_format);
+          cfg.responseSchema = req.response_format.json_schema.schema;
+          cfg.responseMimeType = "application/json";
         }
         break;
       case "json_object":
@@ -773,9 +773,9 @@ const transformFnResponse = ({ content, tool_call_id }, parts) => {
 
 const transformFnCalls = (message) => {
   const { tool_calls } = message;
-  const signature = message.thought_signature || 
-                    message.extra_content?.google?.thought_signature ||
-                    tool_calls?.[0]?.extra_content?.google?.thought_signature;
+  const signature = message.thought_signature ||
+    message.extra_content?.google?.thought_signature ||
+    tool_calls?.[0]?.extra_content?.google?.thought_signature;
 
   const calls = {};
   const parts = tool_calls.map(({ function: { arguments: argstr, name }, id, type }, i) => {
@@ -790,7 +790,7 @@ const transformFnCalls = (message) => {
       throw new HttpError("Invalid function arguments: " + argstr, 400);
     }
     calls[id] = { i, name };
-    
+
     const part = {
       functionCall: {
         name,
@@ -799,7 +799,7 @@ const transformFnCalls = (message) => {
     };
 
     if (i === 0 && signature) {
-        part.thoughtSignature = signature;
+      part.thoughtSignature = signature;
     }
     return part;
   });
@@ -826,22 +826,22 @@ function parseAssistantContent(content, stripImages = false) {
     if (match.index > lastIndex) {
       const textBefore = content.substring(lastIndex, match.index);
       // 只有非空文本才推入，避免产生大量空 text part
-      if (textBefore) { 
+      if (textBefore) {
         parts.push({ text: textBefore });
       }
     }
 
     // 如果不需要剥离图片，则转换数据
     if (!stripImages) {
-        const mimeType = match[1];
-        const data = match[2]; // 这里获取到的 data 可能包含换行符
-        parts.push({
-          inlineData: {
-            mimeType,
-            // 建议移除可能存在的换行符，虽然 Gemini 通常能容忍，但清理一下更安全
-            data: data.replace(/\s/g, ''), 
-          },
-        });
+      const mimeType = match[1];
+      const data = match[2]; // 这里获取到的 data 可能包含换行符
+      parts.push({
+        inlineData: {
+          mimeType,
+          // 建议移除可能存在的换行符，虽然 Gemini 通常能容忍，但清理一下更安全
+          data: data.replace(/\s/g, ''),
+        },
+      });
     }
 
     lastIndex = match.index + match[0].length;
@@ -955,41 +955,41 @@ const transformMessages = async (messages, model) => {
       case "assistant":
         item.role = "model";
         let modelParts = [];
-        
+
         // 1. 处理 reasoning_content (作为 thought)
         if (item.reasoning_content) {
-            modelParts.push({ text: item.reasoning_content, thought: true });
+          modelParts.push({ text: item.reasoning_content, thought: true });
         }
 
         if (item.tool_calls) {
-            const toolParts = transformFnCalls(item);
-            modelParts.push(...toolParts);
-            modelParts.calls = toolParts.calls;
+          const toolParts = transformFnCalls(item);
+          modelParts.push(...toolParts);
+          modelParts.calls = toolParts.calls;
         } else {
-            const signature = item.thought_signature || item.extra_content?.google?.thought_signature;
-            
-            if (isV3ImageModel && signature) {
-               // 【V3 逻辑】：
-               let rawContent = typeof item.content === 'string' ? item.content : "";
-               if (Array.isArray(item.content)) {
-                   rawContent = item.content.map(c => c.text || "").join("");
-               }
-               
-               // 剥离图片，不生成 inlineData
-               const textParts = parseAssistantContent(rawContent, true); 
-               
-               // 【关键修复】严格过滤空文本 Part
-               // 只有当 text 存在且不为空字符串时才保留
-               const validTextParts = textParts.filter(p => p.text !== undefined && p.text !== "");
+          const signature = item.thought_signature || item.extra_content?.google?.thought_signature;
 
-               modelParts.push(...validTextParts);
-               modelParts.push({ thoughtSignature: signature });
-
-            } else {
-               // 【V2.5 逻辑】：正常保留 Base64 图片
-               const contentParts = await transformMsg(item);
-               modelParts.push(...contentParts);
+          if (isV3ImageModel && signature) {
+            // 【V3 逻辑】：
+            let rawContent = typeof item.content === 'string' ? item.content : "";
+            if (Array.isArray(item.content)) {
+              rawContent = item.content.map(c => c.text || "").join("");
             }
+
+            // 剥离图片，不生成 inlineData
+            const textParts = parseAssistantContent(rawContent, true);
+
+            // 【关键修复】严格过滤空文本 Part
+            // 只有当 text 存在且不为空字符串时才保留
+            const validTextParts = textParts.filter(p => p.text !== undefined && p.text !== "");
+
+            modelParts.push(...validTextParts);
+            modelParts.push({ thoughtSignature: signature });
+
+          } else {
+            // 【V2.5 逻辑】：正常保留 Base64 图片
+            const contentParts = await transformMsg(item);
+            modelParts.push(...contentParts);
+          }
         }
 
         contents.push({
@@ -1136,7 +1136,7 @@ const transformCandidates = (key, cand) => {
         }
       });
       if (part.thoughtSignature) {
-          thoughtSignature = part.thoughtSignature;
+        thoughtSignature = part.thoughtSignature;
       }
     } else if (part.thought === true && part.text) {
       reasoningParts.push(part.text);
@@ -1147,7 +1147,7 @@ const transformCandidates = (key, cand) => {
       const markdownImage = `![gemini-image-generation](data:${mimeType};base64,${data})`;
       contentParts.push(markdownImage);
       if (part.thoughtSignature) {
-          thoughtSignature = part.thoughtSignature;
+        thoughtSignature = part.thoughtSignature;
       }
     } else if (part.thoughtSignature) {
       thoughtSignature = part.thoughtSignature;
@@ -1186,15 +1186,15 @@ const transformCandidates = (key, cand) => {
 
   if (thoughtSignature) {
     if (message.tool_calls && message.tool_calls.length > 0) {
-        const firstToolCall = message.tool_calls[0];
-        if (!firstToolCall.extra_content) firstToolCall.extra_content = {};
-        if (!firstToolCall.extra_content.google) firstToolCall.extra_content.google = {};
-        firstToolCall.extra_content.google.thought_signature = thoughtSignature;
+      const firstToolCall = message.tool_calls[0];
+      if (!firstToolCall.extra_content) firstToolCall.extra_content = {};
+      if (!firstToolCall.extra_content.google) firstToolCall.extra_content.google = {};
+      firstToolCall.extra_content.google.thought_signature = thoughtSignature;
     } else {
-        if (!message.extra_content) message.extra_content = {};
-        if (!message.extra_content.google) message.extra_content.google = {};
-        message.extra_content.google.thought_signature = thoughtSignature;
-        message.thought_signature = thoughtSignature;
+      if (!message.extra_content) message.extra_content = {};
+      if (!message.extra_content.google) message.extra_content.google = {};
+      message.extra_content.google.thought_signature = thoughtSignature;
+      message.thought_signature = thoughtSignature;
     }
   }
 
@@ -1234,11 +1234,11 @@ const transformUsage = (data) => ({
 const checkPromptBlock = (choices, promptFeedback, key) => {
   if (choices.length) { return; }
   if (promptFeedback?.blockReason) {
-    console.log("Prompt block reason:", promptFeedback.blockReason);
+    // console.log("Prompt block reason:", promptFeedback.blockReason);
     if (promptFeedback.blockReason === "SAFETY") {
       promptFeedback.safetyRatings
         .filter(r => r.blocked)
-        .forEach(r => console.log(r));
+        // .forEach(r => console.log(r));
     }
     choices.push({
       index: 0,
@@ -1266,6 +1266,11 @@ const processCompletionsResponse = (data, model, id) => {
 
 const responseLineRE = /^data: (.*)(?:\n\n|\r\r|\r\n\r\n)/;
 function parseStream(chunk, controller) {
+  // // === 【添加调试代码 START】 ===
+  // console.log("-------------- [DEBUG] Response from Gemini (Raw) --------------");
+  // console.log("[DEBUG Stream Chunk]:", chunk); // 打印 Gemini 返回的原始数据
+  // console.log("----------------------------------------------------------------");
+  // // === 【添加调试代码 END】 ===
   this.buffer += chunk;
   do {
     const match = this.buffer.match(responseLineRE);
@@ -1333,8 +1338,8 @@ function toOpenAiStream(line, controller) {
   const hasToolCalls = "tool_calls" in cand.delta;
   const hasGrounding = "grounding_metadata" in cand.delta;
   const hasUrlContext = "url_context_metadata" in cand.delta;
-  const hasSignature = "thought_signature" in cand.delta || 
-                       (cand.delta.extra_content?.google?.thought_signature);
+  const hasSignature = "thought_signature" in cand.delta ||
+    (cand.delta.extra_content?.google?.thought_signature);
 
   if (hasContent || hasReasoning || hasToolCalls || hasGrounding || hasUrlContext || hasSignature) {
     controller.enqueue(sseline(obj));
